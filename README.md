@@ -22,8 +22,6 @@
 
 From a single image MYRIAD predicts distributions over sparse point trajectories autoregressively. This allows us to predict physically consistent futures in open-set environments (top) conditioned on input movements. By exploring directly in motion space, we can rapidly explore thousands of counterfactual futures, enabling planning by search - here to select a billiard shot (bottom).
 
-This codebase contains PyTorch implementations for training & evaluation.
-
 <h2 align="center"><i>What If:</i> Understanding Motion Through Sparse Interactions</h2>
 
 [![Project Page](https://img.shields.io/badge/Project-Page-blue)](https://compvis.github.io/flow-poke-transformer/)
@@ -44,7 +42,9 @@ This codebase contains PyTorch implementations for training & evaluation.
 
 Flow Poke Transformer (FPT) directly models the uncertainty of the world by predicting distributions of how objects (<span style="color:#ff7f0e">×</span>) may move conditioned on some input movements (pokes, →). We see that whether the hand (below paw) or the paw (above hand) moves downwards directly influences the other's movement. Left: the paw pushing the hand down, will force the hand downwards, resulting in a unimodal distribution. Right: the hand moving down results in two modes, the paw following along or staying put.
 
-This codebase containts a minimal PyTorch implementation covering training & various inference settings.
+---
+
+This codebase containts a minimal PyTorch implementation of both papers covering training & various inference settings.
 
 # 🚀 Usage
 The easiest way to try FPT is via our interactive demo, which you can launch as:

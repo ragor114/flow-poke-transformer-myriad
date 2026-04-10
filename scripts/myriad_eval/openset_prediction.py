@@ -66,6 +66,7 @@ def topk_mse(preds: torch.Tensor, target: torch.Tensor, k: int = 5):
 
 # =============== MYRIAD ===============
 
+
 @torch.no_grad()
 def myriad_predict_function_with_past_cond(row, model: MyriadStepByStep, ensemble_size, gt_tracks, traj_kind, dt_scaling_factor, context_length=1, **kwargs):
     assert context_length == 1, f"Should eval with single-timestep poke conditioning, but found {context_length=}"
@@ -115,9 +116,6 @@ def myriad_predict_function_with_past_cond(row, model: MyriadStepByStep, ensembl
             d_steps=kwargs.get("d_steps", None)
         )
 
-    print(f"Simulation output shape: {simulation.shape=}")
-    print(f"Simulation interpolated shape: {simulation.shape=}")
-
     if ensemble_size > 1:
         simulation = einops.rearrange(simulation, "(1 e) ... -> e ...", e=ensemble_size)
         gt_tracks_before_start = einops.repeat(gt_tracks_before_start, "... -> e ...", e=ensemble_size)
@@ -162,7 +160,7 @@ def load_idx_physion(data_root: Path, idx: int, labels: pd.DataFrame, context_fr
     ry_video_name = "_".join(ry_video_name) + "_img.mp4"
     ry_video_name = ry_video_name.replace("_redyellow", "-redyellow")
 
-    video_path = data_root / "physion" / task / "mp4s-redyellow" / ry_video_name
+    video_path = data_root / task / "mp4s-redyellow" / ry_video_name
     frames = mp.read_video(str(video_path))
 
     video_base = Path(video_path).parent.parent
@@ -198,8 +196,8 @@ def load_idx_physion(data_root: Path, idx: int, labels: pd.DataFrame, context_fr
 
 
 def load_idx_physics_iq(data_root: Path, idx: int, labels: pd.DataFrame, context_frames: int = 8, video_length: int = 80):
-    conditioning_frames = mp.read_video(data_root / "physics-iq" / labels.iloc[idx]["conditioning_path"])
-    testing_frames = mp.read_video(data_root / "physics-iq" / labels.iloc[idx]["testing_path"])
+    conditioning_frames = mp.read_video(data_root / "physics-IQ-benchmark" / labels.iloc[idx]["conditioning_path"])
+    testing_frames = mp.read_video(data_root / "physics-IQ-benchmark" / labels.iloc[idx]["testing_path"])
     start_frame = labels.iloc[idx]["start_frame"]
 
     H, W = conditioning_frames.shape[1:3]
@@ -222,7 +220,7 @@ def load_idx_physics_iq(data_root: Path, idx: int, labels: pd.DataFrame, context
         "context_start": context_start,
         "start_frame": start_frame,
         "context_end": context_end,
-        "video_path": data_root / "physics-iq" / Path(labels.iloc[idx]["conditioning_path"]),
+        "video_path": data_root / "physics-IQ-benchmark" / Path(labels.iloc[idx]["conditioning_path"]),
         "points": np.array(labels.iloc[idx]["points"]),
         "fps": 16,
     }
@@ -290,10 +288,6 @@ def prepare_points_for_tapnext(points):
     return points[..., [1, 0]]
 
 
-def expand_points_for_tapnext(points, *, device=DEVICE):
-    return torch.from_numpy(points[None, :, :].astype(np.float32)).to(device)
-
-
 def pin_xy_to_norm(points, *, W, H):
     return points / np.array([[W, H]])
 
@@ -330,11 +324,7 @@ def get_annotated_video(*, data_root: Path, row, get_extra_query_pts, override_c
 
     # get query points
     extra_query_points = get_extra_query_pts(row, **kwargs)
-
-    # manually annotated points
-    annotated_queries = prepare_points_for_tapnext(pin_to_frame_size(row["points"]))
     extra_queries = [prepare_points_for_tapnext(pin_to_frame_size(x)) for x in all_extra_query_points_except(extra_query_points, keys=["random", "all"])]
-    
     query_type_lens = [kwargs["num_bg"], *[x.shape[0] for x in extra_queries]]
     split_idxs = np.cumsum(query_type_lens)
 
@@ -399,32 +389,10 @@ def evaluate_for_idx_generic(row, annotations, pred_sim, query_splits, cut_video
     return {
         **{f"{i}_MSE": mse[0, i].item() for i in range(mse.shape[1])},
         "top_k_MSE": top_k_vals[0, 0].item(),
-        "top_k_MSE_mean": top_k_vals.mean().item(),
-        "top_k_MSE_std": top_k_vals.std().item(),
     }, top_k_idx
 
 
 # =============== Main Benchmarking Script ===============
-
-
-def save_benchmark_results(results: list[dict[str, float]], ckpt_dir: str, out_path: Path | None) -> None:
-    keys = results[0].keys()
-    rows = {k: [x[k] for x in results] for k in keys} 
-    rows = list(rows.items())
-    table = tabulate(rows, headers=["metric", "value"], tablefmt="github", floatfmt=".6f")
-    click.echo(table)
-
-    base_out = out_path if out_path is not None else Path(ckpt_dir)
-    timestamp_dir = base_out / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    timestamp_dir.mkdir(parents=True, exist_ok=True)
-
-    txt_path = timestamp_dir / "results.txt"
-    txt_path.write_text(table + "\n", encoding="utf-8")
-    click.echo(f"Saved tabulated results to {txt_path}")
-
-    csv_path = timestamp_dir / "results.csv"
-    pd.DataFrame(rows, columns=["metric", "value"]).to_csv(csv_path, index=False)
-    click.echo(f"Saved results to {csv_path}")
 
 
 def benchmark(
@@ -449,6 +417,7 @@ def benchmark(
     labels = pd.read_json(Path(data_root) / "annotations.json")
 
     metrics = []
+    out_path = out_path / "partial_results"
     out_path.mkdir(parents=True, exist_ok=True)
 
     for idx in trange(len(labels)):
@@ -476,7 +445,7 @@ def benchmark(
             generic_metrics, _ = evaluate_for_idx_generic(row, annotations, pred_sim, query_splits, cut_video_to_len)
 
             metrics.append({**generic_metrics, "idx": idx})
-            pd.DataFrame([metrics]).to_json(out_path / f"partial_results_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json", orient="records", indent=4)
+            pd.DataFrame([metrics]).to_json(out_path / f"{idx:02d}.json", orient="records", indent=4)
         except Exception as e:
             print(f"Error processing index {idx}: {e}")
     
@@ -497,7 +466,7 @@ def main(
     ensemble_size: int,
 ):
     seed_everything(42)
-    out_path = Path(out_path)
+    out_path = Path(out_path) / dataset_name / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     out_path.mkdir(parents=True, exist_ok=True)
 
     model = get_model("openset", ckpt_path, compile_mode="max-autotune").to(MYRIAD_DTYPE)
@@ -520,8 +489,11 @@ def main(
         out_path = out_path,
         cut_video_to_len = 32
     )
-     
-    save_benchmark_results(metrics, '.', out_path)
+    
+    metrics_df = pd.DataFrame(metrics)
+    tk = metrics_df["top_k_MSE"]
+    click.echo("\n\n Benchmark Results:")
+    click.echo(f"top_k_MSE: {tk.mean():.6f}")
 
 
 if __name__ == "__main__":
